@@ -1,0 +1,17 @@
+{
+  "name": "queue-me",
+  "version": "0.0.1",
+  "description": "A Postgres backed job queue implementation written by ChatGPT",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
