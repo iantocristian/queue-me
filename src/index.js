@@ -1,27 +1,29 @@
-const { Client } = require('pg');
+const { Pool } = require('pg');
 const EventEmitter = require('events');
 
 class JobQueue extends EventEmitter {
   constructor(name, connectionString) {
     super();
     this.name = name;
-    this.client = new Client(connectionString);
+    this.pool = new Pool({ connectionString });
   }
 
   async init() {
-    await this.client.connect();
-    await this.client.query(`CREATE TABLE IF NOT EXISTS ${this.name} (id serial PRIMARY KEY, payload JSONB, status TEXT, result JSONB);`);
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS ${this.name} (id serial PRIMARY KEY, payload JSONB, status TEXT, result JSONB);`);
   }
 
   async enqueue(payload) {
-    const res = await this.client.query(`INSERT INTO ${this.name} (payload, status) VALUES ($1, 'pending') RETURNING id;`, [payload]);
+    const res = await this.pool.query(`INSERT INTO ${this.name} (payload, status) VALUES ($1, 'pending') RETURNING id;`, [payload]);
     return res.rows[0].id;
   }
 
   async listenForCompletion() {
+    this.listener = await this.pool.connect();
+
     const query = `LISTEN ${this.name}_completed;`;
-    await this.client.query(query);
-    this.client.on('notification', (msg) => {
+    await this.listener.query(query);
+
+    this.listener.on('notification', (msg) => {
       if (msg.channel === `${this.name}_completed`) {
         this.emit('completed', JSON.parse(msg.payload));
       }
@@ -29,8 +31,15 @@ class JobQueue extends EventEmitter {
   }
 
   async markCompleted(id, result) {
-    await this.client.query(`UPDATE ${this.name} SET status = 'completed', result = $1 WHERE id = $2;`, [result, id]);
-    await this.client.query(`NOTIFY ${this.name}_completed, '${JSON.stringify({ id, result })}';`);
+    await this.pool.query(`UPDATE ${this.name} SET status = 'completed', result = $1 WHERE id = $2;`, [result, id]);
+    await this.pool.query(`NOTIFY ${this.name}_completed, '${JSON.stringify({ id, result })}';`);
+  }
+
+  destroy() {
+    this.listener.removeAllListeners();
+    this.listener.release(true);
+    this.listener = null;
+    this.pool = null;
   }
 }
 
@@ -44,7 +53,7 @@ class JobConsumer {
   async start() {
     this.running = true;
     while (this.running) {
-      const res = await this.queue.client.query(`UPDATE ${this.queue.name} SET status = 'processing' WHERE id = (SELECT id FROM ${this.queue.name} WHERE status = 'pending' LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id, payload;`);
+      const res = await this.queue.pool.query(`UPDATE ${this.queue.name} SET status = 'processing' WHERE id = (SELECT id FROM ${this.queue.name} WHERE status = 'pending' LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id, payload;`);
       const job = res.rows[0];
       if (job) {
         if (this.mode === 'auto') {
@@ -77,7 +86,7 @@ class JobConsumer {
   }
 
   async markError(id, error) {
-    await this.queue.client.query(`UPDATE ${this.queue.name} SET status = 'completed', error = $1 WHERE id = $2;`, [error, id]);
+    await this.queue.pool.query(`UPDATE ${this.queue.name} SET status = 'completed', error = $1 WHERE id = $2;`, [error, id]);
   }
 }
 

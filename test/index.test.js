@@ -52,6 +52,7 @@ describe('JobQueue', () => {
       producer.listenForCompletion();
       producer.on('completed', result => {
         expect(result).toEqual({ id: expect.any(Number), result: { success: true } });
+        producer.destroy();
         done();
       });
 
